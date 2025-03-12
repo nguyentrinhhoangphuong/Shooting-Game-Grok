@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Browser Shooting Game</title>
+    <style>
+        canvas {
+            border: 1px solid black;
+            display: block;
+            margin: 0 auto;
+            background: #f0f0f0;
+        }
+        body {
+            text-align: center;
+            font-family: Arial, sans-serif;
+        }
+        #hearts {
+            font-size: 24px;
+            color: red;
+        }
+        #notification {
+            position: absolute;
+            top: 20%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 0, 0, 0.8);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            display: none;
+        }
+        #startScreen, #winScreen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+        }
+        #winScreen {
+            background: rgba(0, 100, 0, 0.8);
+            display: none;
+        }
+        #timer {
+            font-size: 20px;
+            color: #333;
+        }
+        #musicToggle {
+            margin-top: 10px;
+            padding: 5px 10px;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <h2>Shooting Game</h2>
+    <p>Score: <span id="score">0</span> | Lives: <span id="hearts">♥♥♥♥♥</span> | Time: <span id="timer">30</span>s | Wins: <span id="wins">0</span> | Losses: <span id="losses">0</span></p>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <p>Sử dụng A,S,D,W hoặc phím mũi tên để di chuyển - Space để bắn</p>
+    <button id="musicToggle">Toggle Music</button>
+    <div id="notification"></div>
+    <div id="startScreen">
+        <h3>Click to Start</h3>
+        <p>Goal: Score 150 points to win!<br>Kill 15 monsters within 30s</p>
+    </div>
+    <div id="winScreen">
+        <h3>Chúc mừng! Bạn đã chiến thắng!</h3>
+        <p>Click to play again</p>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('score');
+        const heartsDisplay = document.getElementById('hearts');
+        const timerDisplay = document.getElementById('timer');
+        const winsDisplay = document.getElementById('wins');
+        const lossesDisplay = document.getElementById('losses');
+        const notification = document.getElementById('notification');
+        const startScreen = document.getElementById('startScreen');
+        const winScreen = document.getElementById('winScreen');
+        const musicToggle = document.getElementById('musicToggle');
+
+        // Load wins, losses, and music state from localStorage
+        let wins = parseInt(localStorage.getItem('wins')) || 0;
+        let losses = parseInt(localStorage.getItem('losses')) || 0;
+        let musicOn = localStorage.getItem('musicOn') !== 'false'; // Default: true
+        winsDisplay.textContent = wins;
+        lossesDisplay.textContent = losses;
+        musicToggle.textContent = musicOn ? 'Turn Music Off' : 'Turn Music On';
+
+        let score = 0;
+        let lives = 5;
+        let gameStarted = false;
+        let waveKills = 0;
+        const killsToWinWave = 15;
+        let timeLeft = 30;
+        let lastTimeUpdate = 0;
+        let fireworks = [];
+
+        // Sound effects
+        const shootSound = new Audio('gunshot.mp3');
+        shootSound.volume = 0.5;
+
+        // Background music (Nhạc kịch tính)
+        const backgroundMusic = new Audio('https://www.bensound.com/bensound-music/bensound-epic.mp3');
+        backgroundMusic.loop = true;
+        backgroundMusic.volume = 0.1; // Âm lượng mặc định
+        if (musicOn) backgroundMusic.play().catch(() => {});
+
+        // Toggle music
+        musicToggle.addEventListener('click', () => {
+            musicOn = !musicOn;
+            musicToggle.textContent = musicOn ? 'Turn Music Off' : 'Turn Music On';
+            localStorage.setItem('musicOn', musicOn);
+            if (musicOn) {
+                backgroundMusic.play().catch(error => console.log("Music playback failed:", error));
+            } else {
+                backgroundMusic.pause();
+            }
+        });
+
+        // Gun object
+        const gun = {
+            x: 400,
+            y: 550,
+            width: 40,
+            height: 20,
+            speed: 5
+        };
+
+        // Bullet class (for player)
+        class Bullet {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 5;
+                this.speed = 10;
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = 'red';
+                ctx.fill();
+                ctx.closePath();
+            }
+
+            update() {
+                this.y -= this.speed;
+            }
+        }
+
+        // Enemy Bullet class
+        class EnemyBullet {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 5;
+                this.speed = 10;
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = 'purple';
+                ctx.fill();
+                ctx.closePath();
+            }
+
+            update() {
+                this.y += this.speed;
+            }
+        }
+
+        // Monster class
+        class Monster {
+            constructor() {
+                this.x = Math.random() * (canvas.width - 50);
+                this.y = Math.random() * 200;
+                this.width = 50;
+                this.height = 50;
+                this.speed = 1 + Math.random() * 4;
+                this.lastShot = 0;
+                this.shotInterval = 1000 + Math.random() * 1000;
+            }
+
+            draw() {
+                ctx.fillStyle = 'blue';
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+            }
+
+            update() {
+                this.y += this.speed;
+            }
+        }
+
+        // Firework particle class
+        class Firework {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = Math.random() * 3 + 1;
+                this.speedX = (Math.random() - 0.5) * 8;
+                this.speedY = (Math.random() - 0.5) * 8;
+                this.life = 60;
+                this.color = `hsl(${Math.random() * 360}, 100%, 50%)`;
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.closePath();
+            }
+
+            update() {
+                this.x += this.speedX;
+                this.y += this.speedY;
+                this.speedX *= 0.95;
+                this.speedY *= 0.95;
+                this.life--;
+            }
+        }
+
+        let bullets = [];
+        let enemyBullets = [];
+        let monsters = [];
+        let lastMonsterTime = 0;
+        let keys = {};
+
+        // Draw gun
+        function drawGun() {
+            ctx.fillStyle = 'black';
+            ctx.fillRect(gun.x - gun.width/2, gun.y, gun.width, gun.height);
+            ctx.fillRect(gun.x - 2, gun.y - 20, 4, 20);
+        }
+
+        // Collision detection
+        function checkCollision(rect1, rect2) {
+            return (rect1.x < rect2.x + rect2.width &&
+                    rect1.x + rect1.width > rect2.x &&
+                    rect1.y < rect2.y + rect2.height &&
+                    rect1.y + rect1.height > rect2.y);
+        }
+
+        function checkBulletCollision(bullet, target) {
+            return (bullet.x > target.x && 
+                    bullet.x < target.x + target.width &&
+                    bullet.y > target.y &&
+                    bullet.y < target.y + target.height);
+        }
+
+        // Particle effect for hit
+        function createHitEffect(x, y) {
+            for (let i = 0; i < 10; i++) {
+                ctx.beginPath();
+                ctx.arc(
+                    x + (Math.random() - 0.5) * 20,
+                    y + (Math.random() - 0.5) * 20,
+                    Math.random() * 3,
+                    0,
+                    Math.PI * 2
+                );
+                ctx.fillStyle = 'yellow';
+                ctx.fill();
+                ctx.closePath();
+            }
+        }
+
+        // Show notification
+        function showNotification(message) {
+            notification.textContent = message;
+            notification.style.display = 'block';
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 1000);
+        }
+
+        // Reset wave
+        function resetWave() {
+            waveKills = 0;
+            timeLeft = 30;
+            monsters = [];
+            enemyBullets = [];
+            lastMonsterTime = 0;
+            timerDisplay.textContent = timeLeft;
+        }
+
+        // Update lives display and check win/lose conditions
+        function updateLives() {
+            heartsDisplay.textContent = '♥'.repeat(lives);
+            if (lives <= 0) {
+                losses++;
+                lossesDisplay.textContent = losses;
+                localStorage.setItem('losses', losses);
+                alert('Game Over! You Lost! Final Score: ' + score);
+                resetGame();
+            } else if (score >= 150) {
+                wins++;
+                winsDisplay.textContent = wins;
+                localStorage.setItem('wins', wins);
+                winScreen.style.display = 'block';
+                gameStarted = false;
+                for (let i = 0; i < 50; i++) {
+                    fireworks.push(new Firework(Math.random() * canvas.width, Math.random() * canvas.height));
+                }
+                if (musicOn) backgroundMusic.pause(); // Chỉ dừng khi thắng
+            }
+        }
+
+        // Reset game
+        function resetGame() {
+            lives = 5;
+            score = 0;
+            waveKills = 0;
+            timeLeft = 30;
+            monsters = [];
+            bullets = [];
+            enemyBullets = [];
+            gun.x = 400;
+            gun.y = 550;
+            scoreDisplay.textContent = score;
+            heartsDisplay.textContent = '♥'.repeat(lives);
+            timerDisplay.textContent = timeLeft;
+            fireworks = [];
+        }
+
+        // Handle movement
+        function handleMovement() {
+            if ((keys['a'] || keys['arrowleft']) && gun.x - gun.width/2 > 0) gun.x -= gun.speed;
+            if ((keys['d'] || keys['arrowright']) && gun.x + gun.width/2 < canvas.width) gun.x += gun.speed;
+            if ((keys['w'] || keys['arrowup']) && gun.y > 400) gun.y -= gun.speed;
+            if ((keys['s'] || keys['arrowdown']) && gun.y < canvas.height - gun.height) gun.y += gun.speed;
+        }
+
+        // Main game loop
+        function gameLoop(timestamp) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (!gameStarted) {
+                fireworks = fireworks.filter(f => f.life > 0);
+                fireworks.forEach(f => {
+                    f.update();
+                    f.draw();
+                });
+                return;
+            }
+
+            // Update timer
+            if (timestamp - lastTimeUpdate > 1000) {
+                timeLeft--;
+                timerDisplay.textContent = timeLeft;
+                lastTimeUpdate = timestamp;
+            }
+
+            // Check wave completion or failure
+            if (timeLeft <= 0) {
+                lives--;
+                showNotification('Hết thời gian!');
+                resetWave();
+                updateLives();
+            } else if (waveKills >= killsToWinWave) {
+                showNotification('Đợt hoàn thành!');
+                resetWave();
+            }
+
+            // Spawn monsters
+            if (timestamp - lastMonsterTime > 1500) {
+                monsters.push(new Monster());
+                lastMonsterTime = timestamp;
+            }
+
+            // Update and draw player bullets
+            bullets = bullets.filter(bullet => bullet.y > 0);
+            bullets.forEach(bullet => {
+                bullet.update();
+                bullet.draw();
+            });
+
+            // Update and draw enemy bullets
+            enemyBullets = enemyBullets.filter(bullet => bullet.y < canvas.height);
+            enemyBullets.forEach((bullet, index) => {
+                bullet.update();
+                bullet.draw();
+                if (checkBulletCollision(bullet, gun)) {
+                    lives--;
+                    enemyBullets.splice(index, 1);
+                    showNotification('Bị bắn trúng!');
+                    updateLives();
+                }
+            });
+
+            // Update and draw monsters
+            monsters.forEach((monster, monsterIndex) => {
+                monster.update();
+                monster.draw();
+
+                if (timestamp - monster.lastShot > monster.shotInterval) {
+                    enemyBullets.push(new EnemyBullet(monster.x + monster.width/2, monster.y + monster.height));
+                    monster.lastShot = timestamp;
+                }
+
+                bullets.forEach((bullet, bulletIndex) => {
+                    if (checkBulletCollision(bullet, monster)) {
+                        createHitEffect(bullet.x, bullet.y);
+                        bullets.splice(bulletIndex, 1);
+                        monsters.splice(monsterIndex, 1);
+                        score += 10;
+                        waveKills++;
+                        scoreDisplay.textContent = score;
+                    }
+                });
+
+                if (checkCollision(gun, monster)) {
+                    lives--;
+                    monsters.splice(monsterIndex, 1);
+                    showNotification('Va chạm với quái!');
+                    updateLives();
+                }
+            });
+
+            handleMovement();
+            drawGun();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Event listeners for keyboard
+        document.addEventListener('keydown', (e) => {
+            if (!gameStarted) return;
+            keys[e.key.toLowerCase()] = true;
+            if (e.key === ' ' || e.key === 'Spacebar') {
+                bullets.push(new Bullet(gun.x, gun.y - 20));
+                shootSound.currentTime = 0;
+                shootSound.play().catch(error => {
+                    console.log("Audio playback failed:", error);
+                });
+                // Không thay đổi nhạc nền khi bắn
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key.toLowerCase()] = false;
+        });
+
+        // Start game or restart after win
+        canvas.addEventListener('click', () => {
+            if (!gameStarted) {
+                gameStarted = true;
+                startScreen.style.display = 'none';
+                winScreen.style.display = 'none';
+                lastTimeUpdate = performance.now();
+                resetGame();
+                if (musicOn) backgroundMusic.play().catch(error => console.log("Music playback failed:", error));
+                requestAnimationFrame(gameLoop);
+            }
+        });
+
+        // Initial render
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
