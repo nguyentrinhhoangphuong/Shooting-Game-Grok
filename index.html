@@ -388,7 +388,7 @@
                 if (checkBulletCollision(bullet, gun)) {
                     lives--;
                     enemyBullets.splice(index, 1);
-                    showNotification('Bị bắn trúng!');
+                    showNotification("You've been shot!");
                     updateLives();
                 }
             });
@@ -417,7 +417,7 @@
                 if (checkCollision(gun, monster)) {
                     lives--;
                     monsters.splice(monsterIndex, 1);
-                    showNotification('Va chạm với quái!');
+                    showNotification("You've been hit!");
                     updateLives();
                 }
             });
